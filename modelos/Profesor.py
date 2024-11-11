@@ -1,12 +1,12 @@
-from pydantic import BaseModel, Field, ValidationError, root_validator
+from pydantic import BaseModel, Field, ValidationError, root_validator, validator
 from typing import Optional
 
 class Profesor(BaseModel):
-    id: int = Field(...,gt=0, strict=True)
-    numeroEmpleado: int = Field(...,strict=True, gt=0,le=999999)
-    nombres: str = Field(...,min_length=1,strict=True)
-    apellidos: str = Field(...,min_length=1,strict=True)
-    horasClase: int = Field(...,gt=0,le=49,strict=True)
+    id: int = Field(...,ge=0)
+    numeroEmpleado: int = Field(..., ge=0)
+    nombres: str = Field(...,min_length=1)
+    apellidos: str = Field(...,min_length=1)
+    horasClase: int = Field(...,ge=0)
 
     @root_validator(pre=True)
     def check_strict_integers(cls, values):
@@ -23,4 +23,11 @@ class Profesor(BaseModel):
             if values.get(field) is None:
                 raise ValueError(f"El campo '{field}' no puede ser nulo (None).")
         return values
+    
+    # Validador para asegurar que los campos 'nombres' y 'apellidos' no sean cadenas vacías
+    @validator('nombres', 'apellidos')
+    def check_not_empty(cls, v, field):
+        if not v.strip():  # .strip() elimina espacios al principio y final
+            raise ValueError(f"El campo '{field.name}' no puede ser vacío.")
+        return v
         
