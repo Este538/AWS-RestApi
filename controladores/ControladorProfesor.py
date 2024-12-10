@@ -1,55 +1,88 @@
-from fastapi import APIRouter, HTTPException
-from pydantic import ValidationError
-from modelos.Profesor import Profesor
+from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.orm import sessionmaker, Session
+from typing import Optional
 
-#Permite crear rutas fuera del main
+# Configuración del router
 router = APIRouter()
 
-# Cuestiones de práctica, un arreglo
-profesores = []
+# Configuración de la base de datos
+DATABASE_URL = "mysql+mysqlconnector://admin:lab-password@lab.cdimoeeaodmy.us-east-1.rds.amazonaws.com:3306/lab"
+engine = create_engine(DATABASE_URL)
+SessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=engine)
 
-# Endpoints para Profesores
-@router.get("/profesores")
-def get_profesores():
-    return profesores
+Base = declarative_base()
 
-@router.get("/profesores/{id}", status_code=200)
-def get_profesor(id: int):
-    for profesor in profesores:
-        if profesor.id == id:
-            return profesor
-    raise HTTPException(status_code=404, detail="Profesor no encontrado")
+# Modelo de base de datos
+class Profesores(Base):
+    __tablename__ = "Profesores"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True, nullable=False)
+    numeroEmpleado = Column(Integer, nullable=False)
+    nombres = Column(String(50), nullable=False)
+    apellidos = Column(String(50), nullable=False)
+    horasClase = Column(Integer, nullable=False)
+
+Base.metadata.create_all(bind=engine)
+
+# Esquema de Pydantic
+class Profesor(BaseModel):
+    id: Optional[int]
+    numeroEmpleado: int = Field(..., ge=0)
+    nombres: str = Field(...,min_length=1)
+    apellidos: str = Field(...,min_length=1)
+    horasClase: int = Field(...,ge=0)
+
+    class Config:
+        orm_mode = True
+
+# Dependencia para la sesión de la base de datos
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+# Endpoints
+@router.get("/profesores", response_model=list[Profesor])
+async def get_profesores(db: Session = Depends(get_db)):
+    return db.query(Profesores).all()
+
+@router.get("/profesores/{id}", response_model=Profesor)
+async def get_profesor(id: int, db: Session = Depends(get_db)):
+    profesor = db.query(Profesores).filter(Profesores.id == id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+    return profesor
 
 @router.post("/profesores", response_model=Profesor, status_code=201)
-def create_profesor(profesor: dict):  # Si recibe sin ser diccionario, error 422
+async def create_profesor(profesor: Profesor, db: Session = Depends(get_db)):
+    db_profesor = Profesores(**profesor.dict())
     try:
-        # Validación manual usando Pydantic, si no es así, los datos entran sin restricción
-        profesor_obj = Profesor(**profesor)
-        profesores.append(profesor_obj)
-        return profesor_obj
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=e.errors())  
+        db.add(db_profesor)
+        db.commit()
+        db.refresh(db_profesor)
+        return db_profesor
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail="Error al guardar el profesor: " + str(e))
 
-@router.put("/profesores/{id}", response_model=Profesor, status_code=200)
-def update_profesor(id: int, updated_profesor: dict):  # Recibe un diccionario para validación manual
-    try:
-        # Validación manual usando Pydantic
-        profesor_obj = Profesor(**updated_profesor)
-    except ValidationError as e:
-        raise HTTPException(status_code=400, detail=e.errors())  # Error 400 en lugar de 422
+@router.put("/profesores/{id}", response_model=Profesor)
+async def update_profesor(id: int, profesor_recibido: Profesor, db: Session = Depends(get_db)):
+    profesor = db.query(Profesores).filter(Profesores.id == id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+    for key, value in profesor_recibido.dict().items():
+        setattr(profesor, key, value)
+    db.commit()
+    db.refresh(profesor)
+    return profesor
 
-    for index, profesor in enumerate(profesores):
-        if profesor.id == id:
-            profesores[index] = profesor_obj
-            return profesor_obj
-
-    raise HTTPException(status_code=404, detail="Profesor no encontrado")
-
-@router.delete("/profesores/{id}", status_code=200)
-def delete_profesor(id: int):
-    for index, profesor in enumerate(profesores):
-        if profesor.id == id:
-            del profesores[index]
-            return {"message": "Profesor eliminado"}
-    raise HTTPException(status_code=404, detail="Profesor no encontrado")
+@router.delete("/profesores/{id}", response_model=dict)
+async def delete_profesor(id: int, db: Session = Depends(get_db)):
+    profesor = db.query(Profesores).filter(Profesores.id == id).first()
+    if not profesor:
+        raise HTTPException(status_code=404, detail="Profesor no encontrado")
+    db.delete(profesor)
+    db.commit()
+    return {"message": "Profesor eliminado"}
 
